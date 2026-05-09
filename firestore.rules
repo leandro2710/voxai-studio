@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isEmailVerified() && request.auth.uid == userId;
+    }
+
+    function isDeveloper() {
+      // Direct UID check is the most reliable
+      return isSignedIn() && (
+        request.auth.uid == 'Ki6wK4hKvagzQCKI3qSHbh9besu1' ||
+        request.auth.token.email == 'leandroalves7507@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Phase 4: Entity Validations
+    function isValidNarration(data) {
+      return data.keys().hasAll(['text', 'audioBase64', 'voice', 'createdAt', 'title'])
+        && data.keys().size() >= 5
+        && data.text is string && data.text.size() <= 6000
+        && data.audioBase64 is string && data.audioBase64.size() <= 1048576
+        && data.voice is string && data.voice.size() <= 100
+        && data.title is string && data.title.size() <= 200
+        && data.createdAt == request.time;
+    }
+
+    function isValidFeedback(data) {
+      return data.keys().hasAll(['text', 'createdAt'])
+        && data.text is string && data.text.size() <= 4000
+        && data.createdAt == request.time;
+    }
+
+    function isValidPublicAudio(data) {
+      return data.keys().hasAll(['userId', 'userName', 'title', 'downloadURL', 'createdAt', 'expiresAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.userName is string && data.userName.size() <= 200
+        && data.title is string && data.title.size() <= 200
+        && data.downloadURL is string && data.downloadURL.size() <= 1000
+        && data.createdAt == request.time
+        && data.expiresAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isDeveloper();
+      allow list: if isDeveloper();
+      allow create: if isOwner(userId);
+      allow update: if (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'lastActive', 'email']))
+                    || isDeveloper();
+
+      match /narrations/{narrationId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId) && isValidId(narrationId);
+        allow create: if isOwner(userId) && isValidId(narrationId) && isValidNarration(incoming());
+        allow update: if isOwner(userId) && isValidId(narrationId) && (
+          (incoming().diff(existing()).affectedKeys().hasOnly(['title']) && incoming().title is string && incoming().title.size() <= 200) ||
+          (isValidNarration(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'text', 'voice', 'style', 'tone', 'pace', 'expressiveness', 'stability', 'clarity']))
+        );
+        allow delete: if isOwner(userId) && isValidId(narrationId);
+      }
+    }
+
+    match /feedbacks/{feedbackId} {
+      allow create: if true; // Allow anonymous/user feedback
+      allow get, list, delete: if isDeveloper();
+      allow update: if isDeveloper(); // Added for marking as read
+    }
+
+    match /public_audios/{audioId} {
+      allow get: if isValidId(audioId);
+      allow create: if isSignedIn() && isValidId(audioId) && isOwner(incoming().userId) && isValidPublicAudio(incoming());
+      allow delete: if (isSignedIn() && isOwner(existing().userId)) || isDeveloper();
+    }
+  }
+}

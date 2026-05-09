@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "Narration": {
+      "title": "Narration",
+      "description": "A saved historical narration session.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The full text of the narration."
+        },
+        "audioBase64": {
+          "type": "string",
+          "description": "The base64 encoded audio data."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the narration was saved."
+        },
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who saved this narration."
+        }
+      },
+      "required": ["text", "createdAt", "userId"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "User feedback about the platform.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["text", "createdAt"]
+    },
+    "PublicAudio": {
+      "title": "PublicAudio",
+      "description": "An audio shared via a public link.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "title": { "type": "string" },
+        "downloadURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "downloadURL", "createdAt", "expiresAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/narrations/{narrationId}": {
+      "schema": "Narration",
+      "description": "Collection of narrations saved by a specific user."
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Global collection of user feedbacks."
+    },
+    "/public_audios/{audioId}": {
+      "schema": "PublicAudio",
+      "description": "Audios shared publicly."
+    }
+  }
+}
