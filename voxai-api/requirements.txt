@@ -1,0 +1,7 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+piper-tts==1.2.0
+onnxruntime==1.19.2
+requests==2.32.3
+python-multipart==0.0.9
+aiofiles==24.1.0
