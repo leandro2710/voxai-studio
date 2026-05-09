@@ -7,12 +7,16 @@ workflows:
       java: 17
     scripts:
       - name: Instalar dependências
-        script: npm install
+        script: |
+          rm -f package-lock.json
+          rm -rf node_modules
+          npm install --legacy-peer-deps
       - name: Build web
-        script: npm run build
+        script: |
+          npm run build
       - name: Instalar Capacitor
         script: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           npx cap add android
           npx cap sync android
       - name: Build APK
