@@ -1,0 +1,24 @@
+workflows:
+  android-workflow:
+    name: VoxAI Studio APK
+    max_build_duration: 60
+    environment:
+      node: 18.17.0
+      java: 17
+    scripts:
+      - name: Instalar dependências
+        script: npm install
+      - name: Build web
+        script: npm run build
+      - name: Instalar Capacitor
+        script: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap add android
+          npx cap sync android
+      - name: Build APK
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+    artifacts:
+      - android/app/build/outputs/apk/debug/app-debug.apk
