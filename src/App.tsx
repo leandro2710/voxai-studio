@@ -13,8 +13,10 @@ import { generateNarration, NarrationOptions, b64toBlob, VOICE_PROFILES, TONE_OP
 import { checkForCorrections } from './services/textCorrector';
 import { auth, db, storage } from './lib/firebase';
 import { 
-  signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User 
+  GoogleAuthProvider, signInWithCredential, signOut, onAuthStateChanged, User 
 } from 'firebase/auth';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
+import { Capacitor } from '@capacitor/core';
 import { 
   collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, 
   serverTimestamp, Timestamp, updateDoc, getDocsFromServer, limit, getDoc, setDoc
@@ -284,7 +286,9 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('vox-theme') || 'purple');
   const [activeTab, setActiveTab] = useState("editor");
   const [isPro, setIsPro] = useState(() => localStorage.getItem('vox-is-pro') === 'true');
-  const [displayName, setDisplayName] = useState(() => localStorage.getItem('vox-display-name') || "");
+  const [displayName, setDisplayName] = useState(
+    () => localStorage.getItem('vox-display-name') || ''
+  );
   const [fontSize, setFontSize] = useState(() => parseInt(localStorage.getItem('vox-font-size') || '16'));
   const [vibrationEnabled, setVibrationEnabled] = useState(() => localStorage.getItem('vox-vibration') !== 'false');
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => localStorage.getItem('vox-notifications') !== 'false');
@@ -339,6 +343,7 @@ export default function App() {
   const [isSharing, setIsSharing] = useState(false);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [showProModal, setShowProModal] = useState(false);
+  const [voiceSheetOpen, setVoiceSheetOpen] = useState(false);
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(false);
   
   // Customization Options
@@ -381,13 +386,37 @@ export default function App() {
 
   // Sync Theme
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
     localStorage.setItem('vox-theme', theme);
+
+    const themeColors: Record<string, string> = {
+      purple: '263 90% 65%',
+      green:  '142 70% 50%',
+      blue:   '217 91% 60%',
+      red:    '0 84% 60%',
+      white:  '0 0% 100%',
+      silver: '0 0% 75%',
+    };
+
+    const color = themeColors[theme] || themeColors.purple;
+    root.style.setProperty('--primary', color);
+    root.style.setProperty('--accent', color);
+    root.style.setProperty('--ring', color);
+
+    if (theme === 'white' || theme === 'silver') {
+      root.style.setProperty('--primary-foreground', '240 10% 4%');
+    } else {
+      root.style.setProperty('--primary-foreground', '0 0% 100%');
+    }
   }, [theme]);
 
   // Sync Font Size
   useEffect(() => {
-    document.documentElement.style.setProperty('--base-font-size', `${fontSize}px`);
+    const size = fontSize + 'px';
+    document.documentElement.style.setProperty('--base-font-size', size);
+    document.documentElement.style.fontSize = size;
+    document.body.style.fontSize = size;
     localStorage.setItem('vox-font-size', fontSize.toString());
   }, [fontSize]);
 
@@ -566,13 +595,56 @@ export default function App() {
     }
   }, [isDeveloper, activeTab]);
 
+  const handleLogin = async () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await GoogleAuth.initialize({
+          clientId: '842607490770-6ci50u5eokrnma8l9e8ugpgt8p8bh1ub.apps.googleusercontent.com',
+          scopes: ['profile', 'email'],
+          grantOfflineAccess: true,
+        });
+        const googleUser = await GoogleAuth.signIn();
+        const credential = GoogleAuthProvider.credential(
+          googleUser.authentication.idToken
+        );
+        const result = await signInWithCredential(auth, credential);
+        setUser(result.user);
+        addNotification('success', 'Login realizado com sucesso!');
+      } else {
+        const { signInWithPopup, GoogleAuthProvider: GAP } = await import('firebase/auth');
+        const result = await signInWithPopup(auth, new GAP());
+        setUser(result.user);
+        addNotification('success', 'Login realizado com sucesso!');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      addNotification('error', 'Não foi possível fazer login. Tente novamente.');
+    }
+  };
+
   const handleAuth = async () => {
-    if (user) await signOut(auth);
-    else await signInWithPopup(auth, new GoogleAuthProvider());
+    if (user) {
+      await signOut(auth);
+      setUser(null);
+    } else {
+      await handleLogin();
+    }
   };
 
   const applyPreset = (presetOptions: any) => {
     setOptions({ ...options, ...presetOptions });
+  };
+
+  const selectedVoice = VOICE_PROFILES.find(v => v.id === options.voice)?.name || options.voice;
+
+  const handleVoiceSelect = (voiceId: string) => {
+    const profile = VOICE_PROFILES.find(p => p.id === voiceId);
+    if (profile?.category === 'Pro' && !isPro && !isDeveloper) {
+      setShowProModal(true);
+      return;
+    }
+    setOptions(prev => ({ ...prev, voice: voiceId }));
+    setVoiceSheetOpen(false);
   };
 
   const saveCurrentAsPreset = () => {
@@ -917,7 +989,7 @@ export default function App() {
               >
                 <Sparkles className="w-5 h-5 text-primary-foreground" />
               </motion.div>
-              <h1 className="text-xl font-extrabold tracking-tight">VoxAI<span className="text-primary">Studio</span></h1>
+              <h1 className="text-xl font-extrabold tracking-tight">{displayName ? `Olá, ${displayName} 👋` : 'VoxAI Studio'}</h1>
             </div>
             
             <div className="flex items-center gap-2">
@@ -1010,30 +1082,17 @@ export default function App() {
                         <Sparkles className="w-3 h-3 text-primary" /> Modos Rápidos
                       </Label>
                     </div>
-                    <ScrollArea className="w-full whitespace-nowrap pb-2 outline-none">
-                      <div className="flex gap-3 pb-2">
-                        {DEFAULT_PRESETS.map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className={cn(
-                              "flex flex-col items-center gap-3 p-4 rounded-3xl min-w-[100px] aspect-square transition-all border",
-                              options.voice === preset.voice ? 
-                                "glass-card border-primary/40 bg-primary/10 shadow-lg shadow-primary/10 scale-105" : 
-                                "bg-white/[0.02] border-white/5 hover:bg-white/[0.05]"
-                            )}
-                          >
-                            <div className={cn(
-                              "w-10 h-10 rounded-2xl flex items-center justify-center shadow-inner",
-                              options.voice === preset.voice ? "bg-primary text-primary-foreground" : "bg-white/5 text-muted-foreground"
-                            )}>
-                              {React.cloneElement(preset.icon as React.ReactElement, { className: "w-5 h-5" })}
-                            </div>
-                            <span className="text-[10px] font-black uppercase tracking-widest">{preset.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </ScrollArea>
+                    <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                      {DEFAULT_PRESETS.map(preset => (
+                        <button
+                          key={preset.id}
+                          onClick={() => applyPreset(preset)}
+                          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 hover:bg-primary/20 hover:border-primary/40 transition-all text-xs font-semibold whitespace-nowrap"
+                        >
+                          {preset.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* 2. Campo de Texto Expansível */}
@@ -1103,64 +1162,73 @@ export default function App() {
                     {/* Perfil Vocal */}
                     <div className="space-y-1.5">
                       <Label className="text-[10px] uppercase font-black text-muted-foreground tracking-widest pl-1">Perfil Vocal</Label>
-                      <Select 
-                        value={options.voice} 
-                        onValueChange={(v) => {
-                          const profile = VOICE_PROFILES.find(p => p.id === v);
-                          if (profile?.category === 'Pro' && !isPro && !isDeveloper) {
-                            setShowProModal(true);
-                            return;
-                          }
-                          setOptions({...options, voice: v});
-                        }}
+                      <button
+                        onClick={() => setVoiceSheetOpen(true)}
+                        className="flex items-center justify-between w-full h-12 px-4 rounded-xl border border-white/10 bg-white/5"
                       >
-                        <SelectTrigger className="h-14 glass-card border-none bg-white/[0.03] rounded-2xl min-h-[56px] shadow-inner focus:ring-1 focus:ring-primary/40">
-                          <SelectValue placeholder="Escolha um Perfil Vocal" />
-                        </SelectTrigger>
-                        <SelectContent className="glass-card border-white/10 max-h-[400px]">
-                          <div className="p-2 text-[10px] uppercase tracking-widest opacity-40 font-black">Vozes Padrão</div>
-                          {VOICE_PROFILES.filter(v => v.category === 'Padrao').map((v) => (
-                            <SelectItem key={v.id} value={v.id} className="focus:bg-primary/20 rounded-lg m-1 py-1">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-sm tracking-tight">{v.name}</span>
-                                <span className="text-[10px] opacity-50 font-medium">{v.description}</span>
+                        <span className="font-semibold">{selectedVoice}</span>
+                        <ChevronDown className="w-4 h-4 opacity-50" />
+                      </button>
+                      <AnimatePresence>
+                        {voiceSheetOpen && (
+                          <>
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+                              onClick={() => setVoiceSheetOpen(false)}
+                            />
+                            <motion.div
+                              initial={{ y: '100%' }}
+                              animate={{ y: 0 }}
+                              exit={{ y: '100%' }}
+                              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                              className="fixed bottom-0 left-0 right-0 z-50 bg-[#111] rounded-t-3xl max-h-[80vh] overflow-hidden"
+                            >
+                              <div className="flex justify-center pt-3 pb-2">
+                                <div className="w-10 h-1 rounded-full bg-white/20" />
                               </div>
-                            </SelectItem>
-                          ))}
-                          
-                          <Separator className="bg-white/5 mx-1 my-1" />
-                          <div className="p-2 text-[10px] uppercase tracking-widest font-black flex items-center gap-1.5 text-primary">
-                            <Crown className="w-3 h-3 fill-primary" /> Vozes Pro (Assinantes)
-                          </div>
-                          {VOICE_PROFILES.filter(v => v.category === 'Pro').map((v) => (
-                            <SelectItem key={v.id} value={v.id} className="focus:bg-white/20 rounded-lg m-1 py-1 group/item">
-                              <div className="flex flex-col">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-bold text-sm tracking-tight text-white group-item-data-[state=checked]:text-primary">{v.name}</span>
-                                  {v.category === 'Pro' && !isPro && !isDeveloper && <Lock className="w-2.5 h-2.5 opacity-40" />}
+                              <p className="text-center font-black text-sm uppercase tracking-widest opacity-50 pb-3">
+                                Perfil Vocal
+                              </p>
+                              <div className="overflow-y-auto max-h-[65vh] px-4 pb-8 space-y-4">
+                                <div className="space-y-2">
+                                  <p className="text-[10px] uppercase tracking-widest opacity-40 font-black px-1">Vozes Padrão</p>
+                                  {VOICE_PROFILES.filter(v => v.category === 'Padrao').map((v) => (
+                                    <button key={v.id} onClick={() => handleVoiceSelect(v.id)} className={cn("w-full text-left p-4 rounded-2xl border transition-all", options.voice === v.id ? "border-primary bg-primary/10" : "border-white/10 bg-white/5")}>
+                                      <span className="block font-bold text-sm tracking-tight">{v.name}</span>
+                                      <span className="block text-[10px] opacity-50 font-medium">{v.description}</span>
+                                    </button>
+                                  ))}
                                 </div>
-                                <span className="text-[10px] opacity-50 font-medium">{v.description}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-
-                          <Separator className="bg-white/5 mx-1 my-1" />
-                          <div className="p-2 text-[10px] uppercase tracking-widest opacity-40 font-black flex items-center gap-1.5">
-                            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" /> Vozes Especiais
-                          </div>
-                          {VOICE_PROFILES.filter(v => v.category === 'Especial').map((v) => (
-                            <SelectItem key={v.id} value={v.id} className="focus:bg-primary/20 rounded-lg m-1 py-1 group">
-                              <div className="flex flex-col">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-bold text-sm tracking-tight text-primary group-data-[state=checked]:text-primary">{v.name}</span>
-                                  <Star className="w-2.5 h-2.5 text-yellow-500 fill-yellow-500" />
+                                <div className="space-y-2">
+                                  <p className="text-[10px] uppercase tracking-widest font-black flex items-center gap-1.5 text-primary px-1">
+                                    <Crown className="w-3 h-3 fill-primary" /> Vozes Pro (Assinantes)
+                                  </p>
+                                  {VOICE_PROFILES.filter(v => v.category === 'Pro').map((v) => (
+                                    <button key={v.id} onClick={() => handleVoiceSelect(v.id)} className={cn("w-full text-left p-4 rounded-2xl border transition-all", options.voice === v.id ? "border-primary bg-primary/10" : "border-white/10 bg-white/5")}>
+                                      <span className="flex items-center justify-between font-bold text-sm tracking-tight">{v.name}{v.category === 'Pro' && !isPro && !isDeveloper && <Lock className="w-3 h-3 opacity-40" />}</span>
+                                      <span className="block text-[10px] opacity-50 font-medium">{v.description}</span>
+                                    </button>
+                                  ))}
                                 </div>
-                                <span className="text-[10px] opacity-50 font-medium">{v.description}</span>
+                                <div className="space-y-2">
+                                  <p className="text-[10px] uppercase tracking-widest opacity-40 font-black flex items-center gap-1.5 px-1">
+                                    <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" /> Vozes Especiais
+                                  </p>
+                                  {VOICE_PROFILES.filter(v => v.category === 'Especial').map((v) => (
+                                    <button key={v.id} onClick={() => handleVoiceSelect(v.id)} className={cn("w-full text-left p-4 rounded-2xl border transition-all", options.voice === v.id ? "border-primary bg-primary/10" : "border-white/10 bg-white/5")}>
+                                      <span className="flex items-center gap-1.5 font-bold text-sm tracking-tight text-primary">{v.name}<Star className="w-3 h-3 text-yellow-500 fill-yellow-500" /></span>
+                                      <span className="block text-[10px] opacity-50 font-medium">{v.description}</span>
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                            </motion.div>
+                          </>
+                        )}
+                      </AnimatePresence>
                       {VOICE_PROFILES.find(v => v.id === options.voice)?.category === 'Especial' && (
                         <p className="text-[9px] text-center text-primary font-black mt-2 animate-in fade-in slide-in-from-top-1 px-4 py-1.5 bg-primary/10 rounded-full border border-primary/20">
                           ✨ Personagem criativo gerado por IA
@@ -1426,9 +1494,22 @@ export default function App() {
                   </div>
 
                   {savedNarrations.length === 0 ? (
-                    <div className="py-20 flex flex-col items-center text-center space-y-4 opacity-30">
-                      <Library className="w-16 h-16" />
-                      <p className="text-sm font-medium">Sua biblioteca está vazia.</p>
+                    <div className="flex flex-col items-center justify-center flex-1 py-20 gap-6">
+                      <div className="w-24 h-24 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center">
+                        <Mic2 className="w-12 h-12 opacity-20" />
+                      </div>
+                      <div className="text-center space-y-2">
+                        <p className="font-black text-lg">Biblioteca vazia</p>
+                        <p className="text-sm text-muted-foreground max-w-[200px] mx-auto">
+                          Sintetize seu primeiro áudio e salve aqui
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('editor')}
+                        className="px-6 py-2.5 rounded-xl bg-primary/10 border border-primary/30 text-primary text-sm font-bold"
+                      >
+                        Ir para o Estúdio
+                      </button>
                     </div>
                   ) : (
                     <div className="grid gap-4 pb-10">
@@ -1498,7 +1579,7 @@ export default function App() {
                   className="space-y-8 pb-32"
                 >
                   <div className="space-y-1">
-                    <h2 className="text-3xl font-black tracking-tighter">Olá, {displayName || (user?.displayName?.split(' ')[0]) || "Voxer"} 👋</h2>
+                    <h2 className="text-3xl font-black tracking-tighter">{displayName ? `Olá, ${displayName} 👋` : 'Bem-vindo 👋'}</h2>
                     <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest opacity-60">Configurações do Estúdio</p>
                   </div>
 
@@ -1507,24 +1588,23 @@ export default function App() {
                     <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-1">Tema Visual</Label>
                     <div className="grid grid-cols-3 gap-3">
                       {THEMES.map(t => (
-                        <button 
+                        <button
                           key={t.id}
-                          onClick={() => {
-                            if (t.pro && !isPro && !isDeveloper) {
-                              setShowProModal(true);
-                              return;
-                            }
-                            setTheme(t.id);
-                          }}
+                          onClick={() => !t.pro || isPro || isDeveloper ? setTheme(t.id) : setShowProModal(true)}
                           className={cn(
-                            "flex flex-col items-center gap-3 transition-all p-4 rounded-2xl border-2",
-                            theme === t.id ? "bg-primary/10 border-primary shadow-lg" : "bg-white/[0.03] border-transparent hover:bg-white/[0.05]"
+                            "flex flex-col items-center gap-2 p-3 rounded-2xl border transition-all",
+                            theme === t.id
+                              ? "border-primary bg-primary/10"
+                              : "border-white/10 bg-white/5"
                           )}
                         >
-                          <div className={cn("w-10 h-10 rounded-full shadow-lg relative flex items-center justify-center", t.id === 'white' && 'border border-black/10', t.color)}>
-                            {t.pro && <Crown className="w-4 h-4 text-white drop-shadow-md" />}
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-widest">{t.name}</span>
+                          <div className={cn("w-8 h-8 rounded-full", t.color)} />
+                          <span className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+                            {t.name}
+                          </span>
+                          {t.pro && !isPro && !isDeveloper && (
+                            <Lock className="w-3 h-3 opacity-40" />
+                          )}
                         </button>
                       ))}
                     </div>
@@ -1563,21 +1643,26 @@ export default function App() {
                           <Input 
                             value={displayName}
                             onChange={(e) => setDisplayName(e.target.value)}
-                            placeholder={user?.displayName || "Seu Nome"}
+                            placeholder="Como quer ser chamado?"
                             className="h-12 bg-black/20 border-white/5 rounded-xl font-bold px-4 focus:ring-1 focus:ring-primary/40 transition-all"
                           />
                        </div>
 
                        {/* Vibration Toggle */}
-                       <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-[11px] font-black uppercase tracking-widest opacity-40 leading-none">Vibração háptica</p>
-                            <p className="text-[10px] text-muted-foreground mt-1">Vibrar ao concluir tarefas</p>
+                       <div className="flex items-center justify-between py-2">
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-semibold">Vibração Háptica</p>
+                            <p className="text-xs text-muted-foreground">
+                              Vibrar ao concluir tarefas
+                            </p>
                           </div>
-                          <Switch 
+                          <Switch
                             checked={vibrationEnabled}
-                            onCheckedChange={setVibrationEnabled}
-                            className="data-[state=checked]:bg-primary"
+                            onCheckedChange={(v) => {
+                              setVibrationEnabled(v);
+                              localStorage.setItem('vox-vibration', v.toString());
+                              if (v && navigator.vibrate) navigator.vibrate([50]);
+                            }}
                           />
                        </div>
                     </Card>
@@ -1588,29 +1673,37 @@ export default function App() {
                     <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-1">Geral</Label>
                     <Card className="glass-card border-none bg-white/[0.03] p-6 rounded-[2rem] space-y-6">
                         {/* Notificações */}
-                        <div className="flex items-center justify-between">
-                          <p className="text-[11px] font-black uppercase tracking-widest opacity-40 leading-none">Notificações</p>
-                          <Switch 
+                        <div className="flex items-center justify-between py-2">
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-semibold">Notificações</p>
+                            <p className="text-xs text-muted-foreground">
+                              Exibir avisos do aplicativo
+                            </p>
+                          </div>
+                          <Switch
                             checked={notificationsEnabled}
-                            onCheckedChange={setNotificationsEnabled}
-                            className="data-[state=checked]:bg-primary"
+                            onCheckedChange={(v) => {
+                              setNotificationsEnabled(v);
+                              localStorage.setItem('vox-notifications', v.toString());
+                            }}
                           />
                         </div>
 
                         {/* Offline Mode */}
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-[11px] font-black uppercase tracking-widest opacity-40 leading-none">Modo Offline</p>
-                            <p className="text-[10px] text-muted-foreground mt-1">Usar síntese do navegador</p>
+                        <div className="flex items-center justify-between py-2">
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-semibold">Modo Offline</p>
+                            <p className="text-xs text-muted-foreground">
+                              Usar síntese do navegador
+                            </p>
                           </div>
-                          <Switch 
+                          <Switch
                             checked={offlineMode}
                             onCheckedChange={(v) => {
                               setOfflineMode(v);
                               localStorage.setItem('vox-offline', v.toString());
                               addNotification('info', v ? 'Modo Offline Ativado' : 'Modo Cloud Ativado');
                             }}
-                            className="data-[state=checked]:bg-primary"
                           />
                         </div>
 
