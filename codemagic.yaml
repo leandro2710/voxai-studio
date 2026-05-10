@@ -11,6 +11,7 @@ workflows:
           rm -f package-lock.json
           rm -rf node_modules
           npm install --legacy-peer-deps
+          npm install @capacitor/core @codetrix-studio/capacitor-google-auth --legacy-peer-deps
       - name: Build web
         script: |
           npm run build
